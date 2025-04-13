@@ -2,6 +2,8 @@
 
 A comprehensive binary analysis tool that integrates multiple security analysis engines to generate detailed reports about executable files.
 
+> Vibe Coding my Reverse Engineering Job Away
+
 ## Features
 
 - Automated analysis using multiple security tools (CAPA, DIE, PE-sieve)
@@ -25,7 +27,7 @@ A comprehensive binary analysis tool that integrates multiple security analysis 
 
 1. Clone this repository:
    ```
-   git clone https://github.com/yourusername/binscrybe.git
+   git clone https://github.com/ezrealenoch/binscrybe.git
    cd binscrybe
    ```
 
@@ -104,4 +106,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 - [Mandiant](https://github.com/mandiant) for the CAPA tool
 - [Horesicq](https://github.com/horsicq) for the DIE engine
-- [Hasherezade](https://github.com/hasherezade) for PE-sieve 
+- [Hasherezade](https://github.com/hasherezade) for PE-sieve
