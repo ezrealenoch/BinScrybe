@@ -1414,6 +1414,14 @@ def parse_args():
     parser.add_argument("--tools-dir", help="Path to the directory containing analysis tools. Default is 'tools/'", default="tools")
     parser.add_argument("--die-dir", help="Path to the Detect-It-Easy directory. Default is 'tools/die_winxp_portable_3.10_x86/'", default="tools/die_winxp_portable_3.10_x86")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
+    
+    # Ghidra integration options
+    ghidra_group = parser.add_argument_group('Ghidra Integration')
+    ghidra_group.add_argument("--ghidra", action="store_true", help="Import results into Ghidra after analysis")
+    ghidra_group.add_argument("--ghidra-path", help="Path to the Ghidra installation directory")
+    ghidra_group.add_argument("--ghidra-project", help="Path to the Ghidra project directory")
+    ghidra_group.add_argument("--no-headless", action="store_true", help="Run Ghidra in GUI mode instead of headless mode")
+    
     return parser.parse_args()
 
 
@@ -1436,6 +1444,32 @@ def main():
         summary = bs.analyze()
         
         print(f"\nAnalysis complete. Summary saved to: {bs.output_file}")
+        
+        # If Ghidra integration is enabled
+        if args.ghidra:
+            try:
+                from ghidra_integration import GhidraIntegrator
+                
+                print("\nImporting results into Ghidra...")
+                integrator = GhidraIntegrator(
+                    ghidra_path=args.ghidra_path,
+                    project_path=args.ghidra_project,
+                    headless=not args.no_headless
+                )
+                
+                # Get the full report JSON file
+                report_path = os.path.join(args.tools_dir, "full_report.json")
+                if not os.path.exists(report_path):
+                    print(f"Error: Could not find full report JSON at {report_path}")
+                else:
+                    success = integrator.import_binscrybe_results(report_path, args.target)
+                    if success:
+                        print("Results successfully imported into Ghidra.")
+                    else:
+                        print("Failed to import results into Ghidra.")
+            except ImportError:
+                print("Warning: ghidra_integration module not found. Skipping Ghidra integration.")
+                print("To enable Ghidra integration, make sure ghidra_integration.py is in the same directory.")
         
     except Exception as e:
         print(f"Error: {e}")

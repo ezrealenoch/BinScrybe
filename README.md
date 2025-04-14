@@ -13,6 +13,7 @@ A comprehensive binary analysis tool that integrates multiple security analysis 
 - Comprehensive markdown reports for easy sharing
 - Process hollowing and code injection detection
 - Support for various binary formats (PE, ELF, Mach-O)
+- **NEW**: Integration with Ghidra for visual reverse engineering
 
 ## Requirements
 
@@ -63,6 +64,12 @@ Options:
   --tools-dir DIR        Path to tools directory (default: tools/)
   --die-dir DIR          Path to DIE directory (default: tools/die_winxp_portable_3.10_x86/)
   --verbose              Enable verbose output
+
+Ghidra Integration:
+  --ghidra               Import results into Ghidra after analysis
+  --ghidra-path DIR      Path to the Ghidra installation directory
+  --ghidra-project DIR   Path to the Ghidra project directory
+  --no-headless          Run Ghidra in GUI mode instead of headless mode
 ```
 
 ## Output
@@ -93,6 +100,8 @@ This will generate a detailed report named `notepad_summary.md`.
 - `tool_tester.py`: Utility for testing installed tools
 - `tools/`: Directory for external analysis tools
   - `die_winxp_portable_3.10_x86/`: DIE portable version
+- `ghidra_integration.py`: Integration with Ghidra reverse engineering tool
+- `ghidra_scripts/`: Directory containing Ghidra scripts for importing results
 
 ## Contributing
 
@@ -107,3 +116,39 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - [Mandiant](https://github.com/mandiant) for the CAPA tool
 - [Horesicq](https://github.com/horsicq) for the DIE engine
 - [Hasherezade](https://github.com/hasherezade) for PE-sieve
+
+## Ghidra Integration
+
+BinScrybe can integrate with the [Ghidra](https://ghidra-sre.org/) reverse engineering platform to provide visual exploration of analysis results.
+
+### Requirements
+
+- Ghidra 10.0 or later (available from https://ghidra-sre.org/)
+- Java 11 or later
+
+### Usage
+
+To analyze a binary and import the results into Ghidra:
+
+```
+python binscrybe.py path/to/binary.exe --ghidra --ghidra-path "C:/Program Files/Ghidra"
+```
+
+This will:
+1. Analyze the binary using BinScrybe
+2. Import the results into Ghidra as bookmarks and comments
+3. Generate a new Ghidra project with the analysis results
+
+Alternatively, you can import just the results into Ghidra:
+
+```
+python ghidra_integration.py tools/full_report.json path/to/binary.exe --ghidra-path "C:/Program Files/Ghidra"
+```
+
+### Features
+
+The Ghidra integration provides:
+- Bookmarks at addresses where capabilities were detected
+- Comments with explanation of capability functionality
+- Function renaming based on detected capabilities
+- Better navigation and understanding of analysis results
