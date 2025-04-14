@@ -19,6 +19,7 @@ import shutil
 from pathlib import Path
 
 # Import BinScrybe
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from binscrybe import BinScrybe
 
 
@@ -35,17 +36,21 @@ class TestBinScrybeTools(unittest.TestCase):
         
         # Create a temp directory for output files
         cls.temp_dir = tempfile.mkdtemp()
+        cls.output_dir = os.path.join(cls.temp_dir, "output")
+        os.makedirs(cls.output_dir, exist_ok=True)
         
         # Create BinScrybe instance for testing
         cls.binscrybe = BinScrybe(
             cls.test_binary,
-            output_file=os.path.join(cls.temp_dir, "test_output.md"),
+            output_file=os.path.join(cls.output_dir, "test_output.md"),
             tools_dir="tools",
+            output_dir=cls.output_dir,
             die_dir="die_winxp_portable_3.10_x86"
         )
         
         print(f"\nUsing test binary: {cls.test_binary}")
         print(f"Using temp directory: {cls.temp_dir}")
+        print(f"Using output directory: {cls.output_dir}")
         print(f"Using tools directory: {os.path.abspath('tools')}")
         print(f"Using DIE directory: {os.path.abspath('die_winxp_portable_3.10_x86')}")
 
@@ -202,36 +207,31 @@ class TestBinScrybeTools(unittest.TestCase):
                 print(f"    - {anomaly}")
 
     def test_integration_all_tools(self):
-        """Test the integration of all tools together."""
+        """Test integration of all tools together."""
         # Run the full analysis
-        self.binscrybe.analyze()
+        summary = self.binscrybe.analyze()
         
-        # Check that the output files were created
+        # Check if the output file was created
         self.assertTrue(
             os.path.exists(self.binscrybe.output_file),
             f"Output file not created: {self.binscrybe.output_file}"
         )
         
-        # Check that the full report was created
-        report_path = os.path.join(self.binscrybe.tools_dir, "full_report.json")
+        # Check if full report was created
+        report_path = os.path.join(self.binscrybe.output_dir, "full_report.json")
         self.assertTrue(
             os.path.exists(report_path),
             f"Full report not created: {report_path}"
         )
         
-        # Verify the results are populated
-        self.assertIsInstance(self.binscrybe.results, dict, "Results should be a dictionary")
-        self.assertIn("file", self.binscrybe.results, "Results missing 'file' field")
-        self.assertIn("hashes", self.binscrybe.results, "Results missing 'hashes' field")
-        
-        # Print the summary content for verification
-        print("\nGenerated summary file content preview:")
-        try:
-            with open(self.binscrybe.output_file, 'r') as f:
-                summary_content = f.read(1000)  # Read first 1000 chars
-                print(f"  {summary_content[:500]}...")
-        except Exception as e:
-            print(f"  Error reading summary file: {e}")
+        # Verify the output file contains expected sections
+        with open(self.binscrybe.output_file, 'r') as f:
+            content = f.read()
+            
+            # Check for basic sections that should be in any report
+            self.assertIn("BinScrybe Analysis Summary", content, "Missing title in output")
+            self.assertIn("Basic Info", content, "Missing basic info section")
+            self.assertIn("Analysis Tools Used", content, "Missing tools section")
 
 
 if __name__ == "__main__":

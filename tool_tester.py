@@ -2,8 +2,13 @@
 """
 BinScrybe Tool Tester
 
-This script tests each of the tools used by BinScrybe to ensure they can be located,
-executed, and produce the expected output.
+This script tests if all the required external tools are available and working:
+- CAPA
+- DIE (Detect It Easy)
+- PE-sieve
+
+Usage:
+    python tool_tester.py [--tools-dir DIR] [--die-dir DIR] [--output-dir DIR]
 """
 
 import os
@@ -11,8 +16,9 @@ import subprocess
 import sys
 import json
 from pathlib import Path
+import argparse
 
-# Define root directory
+# Directory paths
 ROOT_DIR = os.path.abspath(os.path.dirname(__file__))
 
 # Define tool paths
@@ -24,8 +30,9 @@ TOOLS = {
         "success_marker": "capa detects capabilities in executable files",
     },
     "die": {
-        "path": os.path.join(ROOT_DIR, "tools", "diec.exe"),
+        "path": os.path.join(ROOT_DIR, "tools", "die_winxp_portable_3.10_x86", "diec.exe"),
         "direct_path": os.path.join(ROOT_DIR, "die_winxp_portable_3.10_x86", "diec.exe"),
+        "alt_path": os.path.join(ROOT_DIR, "tools", "die.bat"),
         "test_args": ["-h"],
         "success_marker": "Detect It Easy",
     },
@@ -83,6 +90,10 @@ def test_tool(tool_name):
     elif os.path.exists(tool_info["direct_path"]):
         tool_path = tool_info["direct_path"]
         print(f"Found {tool_name} in direct path: {tool_path}")
+    # Check alternate path for DIE
+    elif tool_name == "die" and "alt_path" in tool_info and os.path.exists(tool_info["alt_path"]):
+        tool_path = tool_info["alt_path"]
+        print(f"Found {tool_name} batch file: {tool_path}")
     else:
         print(f"❌ ERROR: {tool_name} not found in tools or direct path")
         return False
@@ -159,53 +170,75 @@ def test_tool(tool_name):
     
     return True
 
-def test_file_analysis(sample_file=None):
+def test_file_analysis(sample_file=None, output_dir="output"):
     """Test the analysis of a sample file with each tool."""
     print("\n" + "="*50)
     print("TESTING FILE ANALYSIS CAPABILITY")
     print("="*50)
+    
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
     
     # Use this script as a sample file if none provided
     if not sample_file:
         sample_file = __file__
     
     print(f"Using sample file: {sample_file}")
+    print(f"Using output directory: {output_dir}")
     
     # Test CAPA analysis
     if os.path.exists(TOOLS["capa"]["path"]):
         print("\nTesting CAPA file analysis...")
-        cmd = [TOOLS["capa"]["path"], sample_file, "-j"]
+        output_file = os.path.join(output_dir, "capa_test_output.json")
+        cmd = [TOOLS["capa"]["path"], sample_file, "-j", "-o", output_file]
         result = run_command(cmd)
         if result["success"]:
-            print("✓ CAPA successfully analyzed the file")
+            print(f"✓ CAPA successfully analyzed the file and output saved to {output_file}")
             try:
-                capa_json = json.loads(result["stdout"])
-                print(f"✓ CAPA JSON output parsed successfully ({len(result['stdout'])} bytes)")
-            except json.JSONDecodeError:
-                print("❌ ERROR: CAPA output is not valid JSON")
+                with open(output_file, 'r') as f:
+                    capa_json = json.loads(f.read())
+                print(f"✓ CAPA JSON output parsed successfully ({os.path.getsize(output_file)} bytes)")
+            except (json.JSONDecodeError, FileNotFoundError) as e:
+                print(f"❌ ERROR: CAPA output issue: {str(e)}")
         else:
             print(f"❌ ERROR: CAPA analysis failed: {result['stderr']}")
     
     # Test DIE analysis
-    if os.path.exists(TOOLS["die"]["path"]):
+    die_path = TOOLS["die"]["path"]
+    if not os.path.exists(die_path):
+        die_path = TOOLS["die"]["alt_path"] if "alt_path" in TOOLS["die"] and os.path.exists(TOOLS["die"]["alt_path"]) else None
+    
+    if die_path:
         print("\nTesting DIE file analysis...")
-        cmd = [TOOLS["die"]["path"], sample_file]
+        output_file = os.path.join(output_dir, "die_test_output.txt")
+        cmd = [die_path, sample_file]
         result = run_command(cmd)
+        
+        # Save output to file
+        with open(output_file, 'w') as f:
+            f.write(result["stdout"] if result["stdout"] else "No output from DIE")
+        
         if result["success"]:
-            print("✓ DIE successfully analyzed the file")
+            print(f"✓ DIE successfully analyzed the file and output saved to {output_file}")
             print(f"Output: {result['stdout'][:100]}...")
         else:
             print(f"❌ ERROR: DIE analysis failed: {result['stderr']}")
             # Try alternate command format
-            cmd = [TOOLS["die"]["path"], "-l", sample_file]
+            cmd = [die_path, "-l", sample_file]
             result = run_command(cmd)
+            
+            # Save alternate output to file
+            with open(output_file + ".alt", 'w') as f:
+                f.write(result["stdout"] if result["stdout"] else "No output from DIE alternate command")
+            
             if result["success"]:
-                print("✓ DIE (-l format) successfully analyzed the file")
+                print(f"✓ DIE (-l format) successfully analyzed the file and output saved to {output_file}.alt")
                 print(f"Output: {result['stdout'][:100]}...")
     
     # Test PE-sieve analysis
     if os.path.exists(TOOLS["pe-sieve"]["path"]):
         print("\nTesting PE-sieve file analysis...")
+        output_file = os.path.join(output_dir, "pesieve_test_output.txt")
         
         # Try different formats
         formats = [
@@ -216,25 +249,56 @@ def test_file_analysis(sample_file=None):
         ]
         
         success = False
-        for cmd in formats:
-            print(f"Trying format: {' '.join(cmd)}")
-            result = run_command(cmd)
-            if result["success"]:
-                print(f"✓ PE-sieve successfully analyzed the file with format: {' '.join(cmd)}")
-                print(f"Output: {result['stdout'][:100]}...")
-                success = True
-                break
+        with open(output_file, 'w') as f:
+            f.write("PE-sieve test results:\n\n")
+            
+            for i, cmd in enumerate(formats):
+                print(f"Trying format: {' '.join(cmd)}")
+                f.write(f"Command {i+1}: {' '.join(cmd)}\n")
+                
+                result = run_command(cmd)
+                f.write(f"Exit code: {result['exit_code']}\n")
+                f.write(f"Output: {result['stdout']}\n")
+                f.write(f"Error: {result['stderr']}\n\n")
+                
+                if result["success"]:
+                    print(f"✓ PE-sieve successfully analyzed the file with format: {' '.join(cmd)}")
+                    print(f"Output saved to {output_file}")
+                    print(f"Output: {result['stdout'][:100]}...")
+                    success = True
+                    break
         
         if not success:
-            print("❌ ERROR: All PE-sieve formats failed")
+            print(f"❌ ERROR: All PE-sieve formats failed. Results saved to {output_file}")
             print("PE-sieve may only support analyzing running processes.")
 
 def main():
     """Main function to run all tests."""
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Test BinScrybe tools")
+    parser.add_argument("--tools-dir", help="Path to tools directory", default="tools")
+    parser.add_argument("--die-dir", help="Path to DIE directory", default="die_winxp_portable_3.10_x86")
+    parser.add_argument("--output-dir", help="Path to output directory", default="output")
+    parser.add_argument("--sample-file", help="Path to sample file for testing", default=None)
+    args = parser.parse_args()
+    
+    # Create output directory
+    os.makedirs(args.output_dir, exist_ok=True)
+    
     print("\nBINSCRYBE TOOL TESTER")
     print("====================")
     print(f"Working directory: {os.getcwd()}")
     print(f"Root directory: {ROOT_DIR}")
+    print(f"Tools directory: {os.path.abspath(args.tools_dir)}")
+    print(f"Output directory: {os.path.abspath(args.output_dir)}")
+    
+    # Update tool paths based on arguments
+    for tool in TOOLS:
+        if tool == "die":
+            TOOLS[tool]["path"] = os.path.join(ROOT_DIR, args.tools_dir, os.path.basename(args.die_dir), "diec.exe")
+            TOOLS[tool]["direct_path"] = os.path.join(ROOT_DIR, args.die_dir, "diec.exe")
+        else:
+            TOOLS[tool]["path"] = os.path.join(ROOT_DIR, args.tools_dir, os.path.basename(TOOLS[tool]["path"]))
     
     # Test each tool
     test_results = {}
@@ -243,7 +307,7 @@ def main():
     
     # Test file analysis
     if any(test_results.values()):
-        test_file_analysis()
+        test_file_analysis(args.sample_file, args.output_dir)
     
     # Summary
     print("\n" + "="*50)
@@ -260,6 +324,9 @@ def main():
     else:
         print("\n⚠️ Some tools failed tests. BinScrybe may not work correctly.")
         print("Please check the individual test results above for details.")
+    
+    # Output location summary
+    print(f"\nAll test results have been saved to: {os.path.abspath(args.output_dir)}")
 
 if __name__ == "__main__":
     main() 

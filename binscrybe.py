@@ -23,57 +23,66 @@ import re
 
 
 class BinScrybe:
-    def __init__(self, target_file, output_file=None, tools_dir="tools", die_dir=None, skip_capa=False, 
-                 skip_die=False, skip_pesieve=False, verbose=False):
-        """Initialize BinScrybe.
-        
+    """Main BinScrybe class for binary analysis."""
+
+    def __init__(self, target_file, output_file=None, tools_dir="tools", output_dir="output", die_dir=None, skip_capa=False,
+                 skip_die=False, skip_pesieve=False, verbose=False, ghidra=False,
+                 ghidra_path=None, ghidra_project=None, headless=True):
+        """
+        Initialize the BinScrybe analyzer.
+
         Args:
-            target_file (str): Path to the binary file to analyze.
+            target_file (str): Path to the target file to analyze.
             output_file (str, optional): Path to the output file. Defaults to None.
-            tools_dir (str, optional): Path to the directory containing analysis tools. Defaults to "tools".
-            die_dir (str, optional): Path to the DIE directory. Defaults to None (will try to auto-detect).
+            tools_dir (str, optional): Path to the tools directory. Defaults to "tools".
+            output_dir (str, optional): Path to the output directory. Defaults to "output".
+            die_dir (str, optional): Path to the DIE directory. Defaults to None.
             skip_capa (bool, optional): Skip CAPA analysis. Defaults to False.
             skip_die (bool, optional): Skip DIE analysis. Defaults to False.
             skip_pesieve (bool, optional): Skip PE-sieve analysis. Defaults to False.
             verbose (bool, optional): Enable verbose output. Defaults to False.
+            ghidra (bool, optional): Enable Ghidra integration. Defaults to False.
+            ghidra_path (str, optional): Path to the Ghidra installation. Defaults to None.
+            ghidra_project (str, optional): Path to the Ghidra project. Defaults to None.
+            headless (bool, optional): Run Ghidra in headless mode. Defaults to True.
         """
         self.target_file = os.path.abspath(target_file)
-        if not os.path.exists(self.target_file):
-            raise FileNotFoundError(f"Target file not found: {self.target_file}")
-        
-        self.filename = os.path.basename(self.target_file)
-        self.output_file = output_file or f"{os.path.splitext(self.filename)[0]}_summary.md"
-        
-        # Store directory paths - keep these relative when possible for portability
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        if os.path.isabs(tools_dir):
-            self.tools_dir = tools_dir
-        else:
-            # Make relative to script location for consistency
-            self.tools_dir = os.path.normpath(os.path.join(script_dir, tools_dir))
-        
-        # Handle die_dir parameter
-        if die_dir:
-            if os.path.isabs(die_dir):
-                self.die_dir = die_dir
-            else:
-                # Make relative to script location for consistency
-                self.die_dir = os.path.normpath(os.path.join(script_dir, die_dir))
-        else:
-            self.die_dir = None
-        
+        self.filename = os.path.basename(target_file)
+        self.tools_dir = tools_dir
+        self.output_dir = output_dir
+        self.die_dir = die_dir
         self.skip_capa = skip_capa
         self.skip_die = skip_die
         self.skip_pesieve = skip_pesieve
         self.verbose = verbose
+        self.ghidra = ghidra
+        self.ghidra_path = ghidra_path
+        self.ghidra_project = ghidra_project
+        self.headless = headless
+        
+        # Create output directory if it doesn't exist
+        os.makedirs(self.output_dir, exist_ok=True)
+        
+        # Set output file path in the output directory
+        if output_file:
+            self.output_file = output_file
+        else:
+            self.output_file = os.path.join(self.output_dir, f"{os.path.splitext(self.filename)[0]}_summary.md")
+        
+        # Check if target file exists
+        if not os.path.exists(self.target_file):
+            print(f"Error: Target file not found: {self.target_file}")
+            sys.exit(1)
+        
+        # Check if tools directory exists
+        if not os.path.exists(self.tools_dir):
+            os.makedirs(self.tools_dir)
+            print(f"Created tools directory: {self.tools_dir}")
         
         # Analysis results
         self.capa_results = {}
         self.die_results = {}
         self.pesieve_results = {}
-        
-        # Create tools directory if it doesn't exist
-        os.makedirs(self.tools_dir, exist_ok=True)
         
         # Initialize results dictionary
         self.results = {
@@ -130,240 +139,138 @@ class BinScrybe:
             }
     
     def run_capa(self) -> Dict[str, Any]:
-        """Run CAPA and parse the results."""
+        """Run CAPA to detect capabilities in the binary."""
         if self.skip_capa:
             return {
                 "error": "CAPA analysis skipped",
-                "capabilities": [],
-                "rules_triggered": []
+                "capabilities": []
             }
         
-        # Look in tools directory first, then try PATH
+        # Check if CAPA executable exists
         capa_path = os.path.join(self.tools_dir, "capa.exe")
-        if not os.path.exists(capa_path):
-            print(f"CAPA not found in tools directory, checking PATH...")
-            capa_path = "capa.exe"  # Try using from PATH
-        
         if not os.path.exists(capa_path) and not self._command_exists("capa.exe"):
-            print("Warning: CAPA not found in tools directory or in PATH")
-            return {
-                "error": "CAPA executable not found",
-                "capabilities": [],
-                "rules_triggered": []
-            }
-            
-        output_file = os.path.join(self.tools_dir, "capa_output.json")
-        
-        # First run CAPA with -vv to get detailed output with addresses
-        print("Running CAPA...")
-        cmd = [capa_path, self.target_file, "-vv"]
-        result = self._run_command(cmd)
-        
-        if not result["success"]:
-            error_msg = result["stderr"] or f"CAPA exited with code {result['exit_code']}"
-            print(f"Error running CAPA: {error_msg}")
-            return {
-                "error": error_msg,
-                "capabilities": [],
-                "rules_triggered": []
-            }
-        
-        # Parse the text-based verbose output to extract capabilities with addresses
-        capabilities = []
-        rules_triggered = []
-        
-        capa_output = result["stdout"].split("\n")
-        
-        # Process text output line by line
-        i = 0
-        current_capability = None
-        current_addresses = []
-        namespace = None
-        skip_info_lines = True  # Skip metadata lines at the beginning
-        
-        while i < len(capa_output):
-            line = capa_output[i].strip()
-            
-            # Skip empty lines and metadata lines at the beginning
-            if not line or (skip_info_lines and (line.startswith("md5") or 
-                                                line.startswith("sha1") or 
-                                                line.startswith("path") or
-                                                line.startswith("timestamp") or
-                                                line.startswith("capa version") or
-                                                line.startswith("os") or
-                                                line.startswith("format") or
-                                                line.startswith("arch") or
-                                                line.startswith("analysis") or
-                                                line.startswith("extractor") or
-                                                line.startswith("base address") or
-                                                line.startswith("rules") or
-                                                line.startswith("function count") or
-                                                line.startswith("library function count") or
-                                                line.startswith("total feature count"))):
-                i += 1
-                continue
-            
-            # Stop skipping info lines once we get past the header
-            skip_info_lines = False
-            
-            # If we find a capability name (it will be followed by details)
-            if (not line.startswith(" ") and 
-                not line.startswith("function @") and 
-                not line.startswith("basic block @") and
-                not line.startswith("instruction @") and 
-                not line.startswith("scope") and
-                not line.startswith("mbc") and
-                not line.startswith("references") and
-                not line.startswith("-") and
-                not line.startswith("=") and
-                ":" not in line[:5]):
-                
-                # Save previous capability if exists
-                if current_capability and current_addresses:
-                    # Create capability name with namespace if available
-                    capability_name = current_capability
-                    if namespace and not namespace.startswith("author") and "matches" not in namespace:
-                        capability_name = f"{namespace}: {current_capability}"
-                    
-                    # Format address string
-                    addr_str = ", ".join(current_addresses[:5])
-                    if len(current_addresses) > 5:
-                        addr_str += f" (+ {len(current_addresses) - 5} more)"
-                    
-                    capabilities.append(f"{capability_name} @ {addr_str}")
-                    rule_info = {
-                        "name": capability_name,
-                        "addresses": current_addresses
-                    }
-                    rules_triggered.append(rule_info)
-                
-                # Start a new capability
-                current_capability = line
-                current_addresses = []
-                namespace = None
-                
-                # Look for namespace in the next line
-                if i+1 < len(capa_output) and capa_output[i+1].strip().startswith("namespace"):
-                    namespace = capa_output[i+1].strip().replace("namespace", "").strip()
-                
-                # Skip metadata lines
-                j = i + 1
-                while j < len(capa_output) and (capa_output[j].strip().startswith("author") or 
-                                               capa_output[j].strip().startswith("scope") or
-                                               capa_output[j].strip().startswith("namespace") or
-                                               capa_output[j].strip().startswith("att&ck") or
-                                               capa_output[j].strip().startswith("mbc") or
-                                               capa_output[j].strip().startswith("references")):
-                    j += 1
-                
-                i = j
-            
-            # Look for addresses (indicated by @ symbol followed by hex)
-            elif "@" in line and "0x" in line:
-                # Extract all addresses from the line
-                address_matches = re.findall(r'@ (0x[0-9a-fA-F]+)', line)
-                if address_matches:
-                    current_addresses.extend(address_matches)
-                
-                # Also check for comma-separated addresses
-                comma_addr_matches = re.findall(r'(0x[0-9a-fA-F]+)(?:, )?(0x[0-9a-fA-F]+)?(?:, )?(0x[0-9a-fA-F]+)?', line)
-                for match in comma_addr_matches:
-                    for addr in match:
-                        if addr and addr not in current_addresses:
-                            current_addresses.append(addr)
-                
-                i += 1
+            if not self._command_exists("capa"):
+                print("CAPA not found in tools directory or PATH")
+                return {
+                    "error": "CAPA executable not found",
+                    "capabilities": []
+                }
             else:
-                i += 1
+                capa_path = "capa"
         
-        # Add the last capability if any
-        if current_capability and current_addresses:
-            # Create capability name with namespace if available
-            capability_name = current_capability
-            if namespace and not namespace.startswith("author") and "matches" not in namespace:
-                capability_name = f"{namespace}: {current_capability}"
-            
-            # Format address string
-            addr_str = ", ".join(current_addresses[:5])
-            if len(current_addresses) > 5:
-                addr_str += f" (+ {len(current_addresses) - 5} more)"
-            
-            capabilities.append(f"{capability_name} @ {addr_str}")
-            rule_info = {
-                "name": capability_name,
-                "addresses": current_addresses
+        # Create output file in the output directory
+        output_file = os.path.join(self.output_dir, "capa_output.json")
+        
+        # Check which version of CAPA we have
+        try:
+            result = subprocess.run(
+                [capa_path, "-V"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if result.returncode == 0:
+                capa_version = result.stdout.strip()
+                print(f"Using CAPA version: {capa_version}")
+        except Exception:
+            pass
+        
+        # Build CAPA command
+        cmd = [capa_path, "-j", self.target_file]
+        
+        # Add extra options if needed
+        if self.verbose:
+            cmd.insert(1, "-v")
+        
+        # Run CAPA
+        print("Running CAPA...")
+        r = self._run_command(cmd)
+        
+        if not r["success"]:
+            print(f"CAPA failed: {r['stderr']}")
+            return {
+                "error": f"CAPA execution failed: {r['stderr']}",
+                "capabilities": []
             }
-            rules_triggered.append(rule_info)
         
-        # If no capabilities found using text method, try the JSON method as fallback
-        if not capabilities:
-            print("No capabilities found using text parsing, trying JSON method...")
-            cmd = [capa_path, self.target_file, "-j"]
-            result = self._run_command(cmd)
+        # Parse JSON output
+        try:
+            data = json.loads(r["stdout"])
             
-            if result["success"]:
-                try:
-                    capa_results = json.loads(result["stdout"])
-                    
-                    if "rules" in capa_results:
-                        for namespace, rules in capa_results["rules"].items():
-                            # Skip meta/source/matches
-                            if namespace in ["meta", "source", "matches"]:
-                                continue
-                            
-                            for rule_name, details in rules.items():
-                                capabilities.append(f"{namespace}: {rule_name}")
-                                rule_info = {
-                                    "name": f"{namespace}: {rule_name}",
-                                    "addresses": []
-                                }
-                                rules_triggered.append(rule_info)
-                except json.JSONDecodeError:
-                    pass
-        
-        # Clean up and filter capabilities
-        filtered_capabilities = []
-        for capability in capabilities:
-            # Skip capabilities that start with author or have author names
-            if capability.startswith("author") or "@mandiant.com" in capability or "@google.com" in capability:
-                continue
-                
-            # Skip capabilities that are just addresses or have "match:" prefix with no clear description
-            if " @ 0x" in capability and (
-                capability.startswith("basic block:") or
-                capability.startswith("number:") or
-                capability.startswith("optional:") or
-                capability.startswith("operand[") or
-                capability.startswith("mnemonic:") or
-                "scope" in capability or
-                "instruction:" in capability or
-                "references" in capability or
-                capability.startswith("match:")):
-                continue
-                
-            # Skip URLs and email addresses
-            if ("http" in capability and "://" in capability) or "@" in capability and "." in capability:
-                continue
-                
-            # Skip cryptic entries that are likely just internal references
-            if capability.startswith("[") and "]" in capability and len(capability.split("]")[0]) < 15:
-                continue
-                
-            # Skip "match" entries - these are usually noise
-            if capability.startswith("match"):
-                continue
-                
-            # Keep the capability
-            filtered_capabilities.append(capability)
-        
-        # Save output for reference
-        with open(output_file, 'w') as f:
-            f.write("\n".join(filtered_capabilities))
-        
-        return {
-            "capabilities": filtered_capabilities,
-            "rules_triggered": rules_triggered
-        }
+            # Extract useful information from CAPA results
+            capabilities = []
+            if "meta" in data and "analysis" in data["meta"]:
+                analysis = data["meta"]["analysis"]
+                if "arch" in analysis:
+                    self.results["architecture"] = analysis["arch"]
+                if "os" in analysis:
+                    self.results["os"] = analysis["os"]
+                if "format" in analysis:
+                    self.results["format"] = analysis["format"]
+            
+            # Extract rules (capabilities)
+            if "rules" in data:
+                for rule_name, matches in data["rules"].items():
+                    if isinstance(matches, dict) and "matches" in matches:
+                        # Older CAPA format
+                        match_locations = []
+                        for match in matches["matches"]:
+                            if isinstance(match, dict) and "addr" in match:
+                                match_locations.append(match["addr"])
+                        capabilities.append({
+                            "name": rule_name,
+                            "namespace": matches.get("namespace", ""),
+                            "description": matches.get("meta", {}).get("description", ""),
+                            "scope": matches.get("meta", {}).get("scope", ""),
+                            "matches": match_locations[:5]  # Limit to first 5 matches
+                        })
+                    elif isinstance(matches, list):
+                        # Newer CAPA format
+                        # Flatten the list of matches
+                        match_locations = []
+                        for match in matches:
+                            if isinstance(match, dict) and "addresses" in match:
+                                for addr in match["addresses"]:
+                                    match_locations.append(addr)
+                        
+                        # Extract namespace from rule name
+                        namespace = ""
+                        if "/" in rule_name:
+                            namespace = rule_name.split("/")[0]
+                        
+                        capabilities.append({
+                            "name": rule_name,
+                            "namespace": namespace,
+                            "description": "",  # Not available in newer format
+                            "scope": "",  # Not available in newer format
+                            "matches": match_locations[:5]  # Limit to first 5 matches
+                        })
+            
+            # Write filtered capabilities to file for easy review
+            filtered_capabilities = []
+            for cap in capabilities:
+                addresses = ", ".join(cap["matches"][:5])
+                filtered_capabilities.append(f"{cap['name']} @ {addresses}")
+            
+            with open(output_file, 'w') as f:
+                f.write("\n".join(filtered_capabilities))
+            
+            return {
+                "capabilities": capabilities
+            }
+            
+        except json.JSONDecodeError:
+            print("Failed to parse CAPA output as JSON")
+            return {
+                "error": "Failed to parse CAPA output as JSON",
+                "capabilities": []
+            }
+        except Exception as e:
+            print(f"Error processing CAPA results: {str(e)}")
+            return {
+                "error": f"Error processing CAPA results: {str(e)}",
+                "capabilities": []
+            }
     
     def run_die(self) -> Dict[str, Any]:
         """Run Detect-It-Easy and parse the results."""
@@ -420,7 +327,7 @@ class BinScrybe:
                 "entropy": None
             }
         
-        output_file = os.path.join(self.tools_dir, "die_output.json")
+        output_file = os.path.join(self.output_dir, "die_output.json")
         
         # First try the CLI version (diec.exe)
         if os.path.exists(die_cli_path):
@@ -760,36 +667,27 @@ class BinScrybe:
         return result
     
     def run_pesieve(self) -> Dict[str, Any]:
-        """Run PE-sieve and parse the results."""
+        """Run PE-sieve to detect anomalies in PE files."""
         if self.skip_pesieve:
             return {
                 "error": "PE-sieve analysis skipped",
                 "hollowing_detected": False,
-                "anomalies": [],
-                "injected_sections": [],
-                "basic_pe_analysis": {}
+                "anomalies": []
             }
         
-        # Look in tools directory first, then try PATH
+        # Create output file in the output directory
+        output_file = os.path.join(self.output_dir, "pesieve_output.txt")
+        
+        # Check if PE-sieve executable exists
         pesieve_path = os.path.join(self.tools_dir, "pe-sieve64.exe")
-        if not os.path.exists(pesieve_path):
-            print(f"PE-sieve not found in tools directory, checking PATH...")
-            pesieve_path = "pe-sieve64.exe"  # Try using from PATH
-            
         if not os.path.exists(pesieve_path) and not self._command_exists("pe-sieve64.exe"):
-            print("Warning: PE-sieve not found in tools directory or in PATH")
-            
-            # Try to do basic PE analysis ourselves
-            pe_analysis = self._analyze_pe_file()
+            print("PE-sieve not found in tools directory or PATH")
             return {
-                "error": "PE-sieve executable not found - basic analysis performed",
+                "error": "PE-sieve executable not found",
                 "hollowing_detected": False,
                 "anomalies": [],
-                "injected_sections": [],
-                "basic_pe_analysis": pe_analysis
+                "basic_pe_analysis": self._check_pe_file()
             }
-        
-        output_file = os.path.join(self.tools_dir, "pesieve_output.txt")
         
         # First check PE-sieve version using help to determine supported parameters
         help_cmd = [pesieve_path, "/help"]
@@ -844,8 +742,7 @@ class BinScrybe:
                         "error": "Not a valid PE file",
                         "hollowing_detected": False,
                         "anomalies": [],
-                        "injected_sections": [],
-                        "basic_pe_analysis": self._analyze_pe_file()
+                        "basic_pe_analysis": self._check_pe_file()
                     }
                     
             # If no useful error found, return generic message with detailed logs
@@ -863,8 +760,7 @@ class BinScrybe:
                 "error": "PE-sieve command failed with all attempted formats",
                 "hollowing_detected": False,
                 "anomalies": [],
-                "injected_sections": [],
-                "basic_pe_analysis": self._analyze_pe_file()
+                "basic_pe_analysis": self._check_pe_file()
             }
         
         # Save raw output
@@ -1074,7 +970,7 @@ class BinScrybe:
             self.pesieve_results = self.run_pesieve()
         
         # Save full report
-        report_path = os.path.join(self.tools_dir, "full_report.json")
+        report_path = os.path.join(self.output_dir, "full_report.json")
         with open(report_path, 'w') as f:
             json.dump(self.results, f, indent=2)
         
@@ -1405,14 +1301,15 @@ class BinScrybe:
 
 def parse_args():
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description="BinScrybe: A tool for generating summaries of binaries.")
+    parser = argparse.ArgumentParser(description="BinScrybe: A comprehensive binary analysis tool")
     parser.add_argument("target", help="Path to the binary file to analyze")
     parser.add_argument("-o", "--output", help="Output file path. Default is [binary_name]_summary.md", default=None)
     parser.add_argument("--skip-capa", action="store_true", help="Skip CAPA analysis")
     parser.add_argument("--skip-die", action="store_true", help="Skip DIE analysis")
     parser.add_argument("--skip-pesieve", action="store_true", help="Skip PE-sieve analysis")
     parser.add_argument("--tools-dir", help="Path to the directory containing analysis tools. Default is 'tools/'", default="tools")
-    parser.add_argument("--die-dir", help="Path to the Detect-It-Easy directory. Default is 'tools/die_winxp_portable_3.10_x86/'", default="tools/die_winxp_portable_3.10_x86")
+    parser.add_argument("--output-dir", help="Path to the output directory. Default is 'output/'", default="output")
+    parser.add_argument("--die-dir", help="Path to the Detect-It-Easy directory. Default is 'tools/die_winxp_portable_3.10_x86/'", default=None)
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
     
     # Ghidra integration options
@@ -1420,7 +1317,7 @@ def parse_args():
     ghidra_group.add_argument("--ghidra", action="store_true", help="Import results into Ghidra after analysis")
     ghidra_group.add_argument("--ghidra-path", help="Path to the Ghidra installation directory")
     ghidra_group.add_argument("--ghidra-project", help="Path to the Ghidra project directory")
-    ghidra_group.add_argument("--no-headless", action="store_true", help="Run Ghidra in GUI mode instead of headless mode")
+    ghidra_group.add_argument("--no-headless", dest="headless", action="store_false", help="Run Ghidra in GUI mode instead of headless mode")
     
     return parser.parse_args()
 
@@ -1431,52 +1328,60 @@ def main():
     
     try:
         bs = BinScrybe(
-            args.target,
-            args.output,
-            args.tools_dir,
-            args.die_dir,
-            args.skip_capa,
-            args.skip_die,
-            args.skip_pesieve,
-            args.verbose
+            target_file=args.target,
+            output_file=args.output,
+            tools_dir=args.tools_dir,
+            output_dir=args.output_dir,
+            die_dir=args.die_dir,
+            skip_capa=args.skip_capa,
+            skip_die=args.skip_die,
+            skip_pesieve=args.skip_pesieve,
+            verbose=args.verbose,
+            ghidra=args.ghidra,
+            ghidra_path=args.ghidra_path,
+            ghidra_project=args.ghidra_project,
+            headless=args.headless
         )
         
-        summary = bs.analyze()
+        bs.analyze()
         
         print(f"\nAnalysis complete. Summary saved to: {bs.output_file}")
         
-        # If Ghidra integration is enabled
+        # If Ghidra integration is enabled, import the results
         if args.ghidra:
+            if not args.ghidra_path:
+                print("\nError: --ghidra-path must be specified when using --ghidra")
+                sys.exit(1)
+            
             try:
-                from ghidra_integration import GhidraIntegrator
+                # Import necessary modules
+                import ghidra_integration
                 
-                print("\nImporting results into Ghidra...")
-                integrator = GhidraIntegrator(
-                    ghidra_path=args.ghidra_path,
-                    project_path=args.ghidra_project,
-                    headless=not args.no_headless
+                # Create a full report path
+                report_path = os.path.join(args.output_dir, "full_report.json")
+                
+                # Run Ghidra integration
+                print(f"\nImporting results into Ghidra from {report_path}...")
+                ghidra_integration.import_to_ghidra(
+                    report_path, 
+                    args.target, 
+                    args.ghidra_path, 
+                    args.ghidra_project, 
+                    args.headless
                 )
-                
-                # Get the full report JSON file
-                report_path = os.path.join(args.tools_dir, "full_report.json")
-                if not os.path.exists(report_path):
-                    print(f"Error: Could not find full report JSON at {report_path}")
-                else:
-                    success = integrator.import_binscrybe_results(report_path, args.target)
-                    if success:
-                        print("Results successfully imported into Ghidra.")
-                    else:
-                        print("Failed to import results into Ghidra.")
             except ImportError:
-                print("Warning: ghidra_integration module not found. Skipping Ghidra integration.")
-                print("To enable Ghidra integration, make sure ghidra_integration.py is in the same directory.")
-        
+                print("\nError: ghidra_integration.py not found. Skipping Ghidra integration.")
+                sys.exit(1)
+            except Exception as e:
+                print(f"\nError importing results into Ghidra: {str(e)}")
+                sys.exit(1)
+    
     except Exception as e:
         print(f"Error: {e}")
         if args.verbose:
+            import traceback
             traceback.print_exc()
         sys.exit(1)
 
-
 if __name__ == "__main__":
-    sys.exit(main()) 
+    main() 

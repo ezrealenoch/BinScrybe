@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# C extensions
+*.so
+
 # Distribution / packaging
 dist/
 build/
@@ -13,26 +16,31 @@ venv/
 env/
 ENV/
 
-# IDE files
+# Local development settings
+.env
 .vscode/
 .idea/
-*.swp
-*.swo
 
-# OS specific files
+# Tool outputs and analysis results
+output/
+tools/capa_output.json
+tools/die_output.json
+tools/pesieve_output.txt
+tools/full_report.json
+
+# OS-specific files
 .DS_Store
 Thumbs.db
 
-# Test output files
-test_output.md
-*_summary.md
+# Sample binaries for testing
+*.exe
+*.dll
+*.bin
+!tools/*.exe
+!tools/die_winxp_portable_3.10_x86/*.exe
+!tools/die_winxp_portable_3.10_x86/**/*.exe
 
-# Tool output
-tools/full_report.json
-tools/pesieve_output.txt
-tools/capa_output.json
-tools/die_output.txt
-tools/sigtool_output.txt
-
-# Large binary files
-*.exe 
+# Temporary files
+*~
+*.bak
+*.tmp 

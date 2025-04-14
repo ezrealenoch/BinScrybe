@@ -57,11 +57,12 @@ Options:
 python binscrybe.py path/to/binary.exe [options]
 
 Options:
-  -o, --output FILE      Output file path (default: [binary_name]_summary.md)
+  -o, --output FILE      Output file path (default: output/[binary_name]_summary.md)
   --skip-capa            Skip CAPA analysis
   --skip-die             Skip DIE analysis
   --skip-pesieve         Skip PE-sieve analysis
   --tools-dir DIR        Path to tools directory (default: tools/)
+  --output-dir DIR       Path to output directory (default: output/)
   --die-dir DIR          Path to DIE directory (default: tools/die_winxp_portable_3.10_x86/)
   --verbose              Enable verbose output
 
@@ -84,6 +85,8 @@ BinScrybe generates a comprehensive markdown report that includes:
 - Threat assessment
 - Detailed explanation of suspicious features
 
+All output files are saved to the `output` directory by default. You can specify a different location using the `--output-dir` parameter.
+
 ## Example
 
 Analyzing Windows Notepad:
@@ -91,7 +94,7 @@ Analyzing Windows Notepad:
 python binscrybe.py C:\Windows\notepad.exe
 ```
 
-This will generate a detailed report named `notepad_summary.md`.
+This will generate a detailed report named `output/notepad_summary.md`.
 
 ## Project Structure
 
@@ -100,8 +103,10 @@ This will generate a detailed report named `notepad_summary.md`.
 - `tool_tester.py`: Utility for testing installed tools
 - `tools/`: Directory for external analysis tools
   - `die_winxp_portable_3.10_x86/`: DIE portable version
+- `output/`: Directory for analysis results and reports
 - `ghidra_integration.py`: Integration with Ghidra reverse engineering tool
 - `ghidra_scripts/`: Directory containing Ghidra scripts for importing results
+- `tests/`: Directory for test scripts and resources
 
 ## Contributing
 
@@ -142,7 +147,7 @@ This will:
 Alternatively, you can import just the results into Ghidra:
 
 ```
-python ghidra_integration.py tools/full_report.json path/to/binary.exe --ghidra-path "C:/Program Files/Ghidra"
+python ghidra_integration.py output/full_report.json path/to/binary.exe --ghidra-path "C:/Program Files/Ghidra"
 ```
 
 ### Features
